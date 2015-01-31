@@ -1,53 +1,16 @@
 package watcher
 
-// #include <unistd.h>
-// #include <stdlib.h>
-// #include <stdint.h>
-// #include <stdio.h>
-// #include <string.h>
-// #include <sys/stat.h>
-// #include <sys/types.h>
 // #include <utmp.h>
-//
-// struct utmp_mix {
-// 	uint64_t count;
-//  struct utmp* utmps;
-// };
-// struct utmp_mix* read_utmp() {
-//  struct stat fileStat;
-//  if (stat("/var/run/utmp", &fileStat) < 0) { printf("stat\n"); return NULL; }
-//  struct utmp_mix* bf = calloc(1, sizeof(struct utmp_mix));
-//  if (bf == NULL) { printf("calloc\n"); return NULL; }
-//  bf->count = fileStat.st_size / sizeof(struct utmp);
-//  void* buf = calloc(1, fileStat.st_size);
-//  if (buf == NULL) { printf("calloc\n"); free(bf); return NULL; }
-//  bf->utmps = buf;
-//  FILE* file = fopen("/var/run/utmp", "r");
-//  size_t bread = 0;
-//  while (bread < fileStat.st_size) {
-//   size_t xread = fread(buf, 1, fileStat.st_size, file);
-//   if (xread == 0) {
-//    printf("fread\n");
-//	  free(bf); free(buf); fclose(file); return NULL;
-//   }
-//   bread += xread;
-//  }
-//  return bf;
-// }
-// void free_utmp(struct utmp_mix* p) {
-//  if (p->utmps != NULL) {
-//   memset(p->utmps, 0, sizeof(struct utmp) * p->count);
-//   free(p->utmps);
-//  }
-//  memset(p, 0, sizeof(struct utmp_mix));
-//  free(p);
-// }
 import "C"
 import "unsafe"
 import "reflect"
 
 import (
-	// "golang.org/x/exp/inotify"
+	"errors"
+	"os"
+	"io"
+	"io/ioutil"
+	"fmt"
 	"time"
 	"net"
 )
@@ -58,7 +21,6 @@ type UtmpExitStatus struct {
 	Termination int
 	ExitCode int
 }
-
 
 const (
 	UTMP_RT_EMPTY = UtmpRecordType(C.EMPTY)
@@ -114,21 +76,61 @@ type UtmpData struct {
 
 type Utmp []UtmpData
 
-func ReadUtmp() (Utmp) {
-	v := C.read_utmp()
-	if v == nil {
-		return nil
-	}
-	defer C.free_utmp(v)
-	hdr := reflect.SliceHeader{
-		Data: uintptr(unsafe.Pointer(v.utmps)),
-		Len: int(v.count),
-		Cap: int(v.count),
-	}
-	cSlice := *(*[]C.struct_utmp)(unsafe.Pointer(&hdr))
+func (u Utmp) CurrentUsers() (Utmp) {
+	return u.FilterByRecordTypes([]UtmpRecordType{UTMP_RT_USER_PROCESS})
+}
 
-	goSlice := make([]UtmpData, 0, len(cSlice))
-	for _, cData := range cSlice {
+func (u Utmp) Filter(test func(UtmpData)bool) (Utmp) {
+	out := make([]UtmpData, 0)
+	for _, row := range u {
+		if test(row) {
+			out = append(out, row)
+		}
+	}
+	return out
+
+}
+
+func (u Utmp) FilterByRecordTypes(rts []UtmpRecordType) (Utmp) {
+	allowedRts := make(map[UtmpRecordType]bool)
+	for _, rt := range rts {
+		allowedRts[rt] = true
+	}
+
+	return u.Filter(func (row UtmpData) bool {
+		a, b := allowedRts[row.RecordType]
+		return a &&b
+	})
+}
+
+func (u Utmp) FilterByUsers(users []string) (Utmp) {
+	allowedUsers := make(map[string]bool)
+	for _, user := range users {
+		allowedUsers[user] = true
+	}
+
+	return u.Filter(func (row UtmpData) bool {
+		a, b := allowedUsers[row.User]
+		return a &&b
+	})
+}
+
+func ParseUtmp(data []byte) (Utmp, error) {
+	utmpSize := int(unsafe.Sizeof(C.struct_utmp{}))
+	if len(data) % utmpSize != 0 {
+		return nil, errors.New(fmt.Sprintf(`utmp: mismatched sizes - %d doesn't divide into %d`, utmpSize, len(data)))
+	}
+
+	recordCount := len(data) / utmpSize
+	intHdr := reflect.SliceHeader{
+		Data: uintptr(unsafe.Pointer(&data[0])),
+		Len: recordCount,
+		Cap: recordCount,
+	}
+	intSlice := *(*[]C.struct_utmp)(unsafe.Pointer(&intHdr))
+
+	goSlice := make([]UtmpData, 0, len(intSlice))
+	for _, cData := range intSlice {
 		if UtmpRecordType(cData.ut_type) == UTMP_RT_EMPTY {
 			// bin
 			continue
@@ -170,5 +172,35 @@ func ReadUtmp() (Utmp) {
 			Addr: ipAddr,
 		})
 	}
-	return Utmp(goSlice)
+	return Utmp(goSlice), nil
+}
+
+func ReadUtmp(file io.Reader) (Utmp, error) {
+	data, err := ioutil.ReadAll(file)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUtmp(data)
+}
+
+const (
+	UTMP_LOCATION = "/var/run/utmp"
+	WTMP_LOCATION = "/var/log/wtmp"
+)
+
+func ReadUtmpFromFile(filename string) (Utmp, error) {
+	file, err := os.Open(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return ReadUtmp(file)
+
+}
+
+func ReadUtmpFromSystem() (Utmp, error) {
+	return ReadUtmpFromFile(UTMP_LOCATION)
+}
+func ReadWtmpFromSystem() (Utmp, error) {
+	return ReadUtmpFromFile(WTMP_LOCATION)
 }
