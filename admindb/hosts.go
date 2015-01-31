@@ -1,6 +1,7 @@
 package admindb
 
 import (
+	"github.com/lukegb/labmapper"
 	"database/sql"
 	"fmt"
 	"net"
@@ -37,18 +38,37 @@ type Host struct {
 	ScreenType       *string
 	AssetNumber      *string
 
+	fullDomainName *string
+
 	adminDB *AdminDB
 }
 
 type dbScanner interface {
 	Scan(dest ...interface{}) error
 }
+type dbRows interface {
+	dbScanner
+	Next() bool
+}
+
+func (h *Host) ToMachine() (labmapper.MachineIdentity) {
+	return labmapper.MachineIdentity{
+		ShortName: h.Hostname,
+		Domain: *h.fullDomainName,
+	}
+}
+
+func (a *AdminDB) machineToHost(machine labmapper.MachineIdentity) (*Host, error) {
+	db := a.database
+	row := db.QueryRow("SELECT h.*, d.full_domain_name FROM hosts h LEFT JOIN domains d ON d.domain = h.domain WHERE h.hostname = $1 AND d.full_domain_name = $2", machine.ShortName, machine.Domain)
+	return a.rowToHost(row)
+}
 
 func (a *AdminDB) rowToHost(row dbScanner) (*Host, error) {
 	host := Host{adminDB: a}
 	var ipv4addr string
 	var ipv6addr *string
-	err := row.Scan(&host.Id, &host.Comment, &host.AlteredBy, &host.LastChange, &host.Hostname, &host.Domain, &ipv4addr, &host.HwAddress, &host.Arch, &host.OS, &host.Room, &host.MainUser, &host.Section, &host.Padlock, &host.Switch, &host.ScreenLock, &host.HostGuid, &host.ProvService, &host.SupportPrimary, &host.SupportSecondary, &ipv6addr, &host.Funding, &host.ScreenType, &host.AssetNumber)
+	err := row.Scan(&host.Id, &host.Comment, &host.AlteredBy, &host.LastChange, &host.Hostname, &host.Domain, &ipv4addr, &host.HwAddress, &host.Arch, &host.OS, &host.Room, &host.MainUser, &host.Section, &host.Padlock, &host.Switch, &host.ScreenLock, &host.HostGuid, &host.ProvService, &host.SupportPrimary, &host.SupportSecondary, &ipv6addr, &host.Funding, &host.ScreenType, &host.AssetNumber, &host.fullDomainName)
 
 	host.IPAddress = net.ParseIP(ipv4addr)
 	if ipv6addr != nil {
@@ -64,13 +84,13 @@ func (a *AdminDB) rowToHost(row dbScanner) (*Host, error) {
 
 func (a *AdminDB) GetHostByID(id uint64) (*Host, error) {
 	db := a.database
-	row := db.QueryRow("SELECT * FROM hosts WHERE ID = $1", id)
+	row := db.QueryRow("SELECT h.*, d.full_domain_name FROM hosts h LEFT JOIN domains d ON d.domain = h.domain WHERE h.ID = $1", id)
 	return a.rowToHost(row)
 }
 
 func (a *AdminDB) GetHostByHostname(hostname, domain string) (*Host, error) {
 	db := a.database
-	row := db.QueryRow("SELECT * FROM hosts WHERE hostname = $1 AND domain = $2", hostname, domain)
+	row := db.QueryRow("SELECT h.*, d.full_domain_name FROM hosts h LEFT JOIN domains d ON d.domain = $2 WHERE h.hostname = $1 AND (d.full_domain_name = $2 OR h.domain = $2)", hostname, domain)
 	return a.rowToHost(row)
 }
 
@@ -192,5 +212,5 @@ func (a *AdminDB) GetHostsByHostclass(class string) ([]*Host, error) {
 
 	queryStr, machineArr := makeQueryStr(machines)
 
-	return a.queryToHosts(a.database.Query(fmt.Sprintf(`SELECT * FROM hosts WHERE hostname IN (%s) ORDER BY id`, queryStr), machineArr...))
+	return a.queryToHosts(a.database.Query(fmt.Sprintf(`SELECT h.*, d.full_domain_name FROM hosts h LEFT JOIN domains d ON d.domain=h.domain WHERE h.hostname IN (%s) ORDER BY h.id`, queryStr), machineArr...))
 }
