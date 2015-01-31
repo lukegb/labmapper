@@ -4,6 +4,7 @@ package watcher
 // #include <stdlib.h>
 // #include <stdint.h>
 // #include <stdio.h>
+// #include <string.h>
 // #include <sys/stat.h>
 // #include <sys/types.h>
 // #include <utmp.h>
@@ -47,7 +48,6 @@ import "reflect"
 
 import (
 	// "golang.org/x/exp/inotify"
-	"log"
 	"time"
 	"net"
 )
@@ -57,6 +57,46 @@ type UtmpPid uint64
 type UtmpExitStatus struct {
 	Termination int
 	ExitCode int
+}
+
+
+const (
+	UTMP_RT_EMPTY = UtmpRecordType(C.EMPTY)
+	UTMP_RT_RUN_LVL = UtmpRecordType(C.RUN_LVL)
+	UTMP_RT_BOOT_TIME = UtmpRecordType(C.BOOT_TIME)
+	UTMP_RT_NEW_TIME = UtmpRecordType(C.NEW_TIME)
+	UTMP_RT_OLD_TIME = UtmpRecordType(C.OLD_TIME)
+	UTMP_RT_INIT_PROCESS = UtmpRecordType(C.INIT_PROCESS)
+	UTMP_RT_LOGIN_PROCESS = UtmpRecordType(C.LOGIN_PROCESS)
+	UTMP_RT_USER_PROCESS = UtmpRecordType(C.USER_PROCESS)
+	UTMP_RT_DEAD_PROCESS = UtmpRecordType(C.DEAD_PROCESS)
+	UTMP_RT_ACCOUNTING = UtmpRecordType(C.ACCOUNTING)
+)
+
+func (rt UtmpRecordType) String() string {
+	switch rt {
+	case UTMP_RT_EMPTY:
+		return "EMPTY"
+	case UTMP_RT_RUN_LVL:
+		return "RUN_LVL"
+	case UTMP_RT_BOOT_TIME:
+		return "BOOT_TIME"
+	case UTMP_RT_NEW_TIME:
+		return "NEW_TIME"
+	case UTMP_RT_OLD_TIME:
+		return "OLD_TIME"
+	case UTMP_RT_INIT_PROCESS:
+		return "INIT_PROCESS"
+	case UTMP_RT_LOGIN_PROCESS:
+		return "LOGIN_PROCESS"
+	case UTMP_RT_USER_PROCESS:
+		return "USER_PROCESS"
+	case UTMP_RT_DEAD_PROCESS:
+		return "DEAD_PROCESS"
+	case UTMP_RT_ACCOUNTING:
+		return "ACCOUNTING"
+	}
+	return "<UNKNOWN>"
 }
 
 type UtmpData struct {
@@ -72,7 +112,9 @@ type UtmpData struct {
 	Addr net.IP
 }
 
-func ReadUtmp() ([]UtmpData) {
+type Utmp []UtmpData
+
+func ReadUtmp() (Utmp) {
 	v := C.read_utmp()
 	if v == nil {
 		return nil
@@ -85,8 +127,13 @@ func ReadUtmp() ([]UtmpData) {
 	}
 	cSlice := *(*[]C.struct_utmp)(unsafe.Pointer(&hdr))
 
-	goSlice := make([]UtmpData, len(cSlice))
-	for n, cData := range cSlice {
+	goSlice := make([]UtmpData, 0, len(cSlice))
+	for _, cData := range cSlice {
+		if UtmpRecordType(cData.ut_type) == UTMP_RT_EMPTY {
+			// bin
+			continue
+		}
+
 		iphdr := reflect.SliceHeader{
 			Data: uintptr(unsafe.Pointer(&cData.ut_addr_v6[0])),
 			Len: 16,
@@ -107,7 +154,7 @@ func ReadUtmp() ([]UtmpData) {
 			}
 		}
 
-		goSlice[n] = UtmpData{
+		goSlice = append(goSlice, UtmpData{
 			RecordType: UtmpRecordType(cData.ut_type),
 			Pid: UtmpPid(cData.ut_pid),
 			Line: C.GoString(&cData.ut_line[0]),
@@ -121,8 +168,7 @@ func ReadUtmp() ([]UtmpData) {
 			SessionID: uint64(cData.ut_session),
 			Time: time.Unix(int64(cData.ut_tv.tv_sec), int64(cData.ut_tv.tv_usec)*1000),
 			Addr: ipAddr,
-		}
+		})
 	}
-	log.Println(goSlice)
-	return goSlice
+	return Utmp(goSlice)
 }
