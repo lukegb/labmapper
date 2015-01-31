@@ -1,8 +1,8 @@
 package labmapper
 
 import (
-	"net"
 	"fmt"
+	"net"
 	"time"
 )
 

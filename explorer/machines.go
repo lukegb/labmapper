@@ -1,8 +1,8 @@
 package explorer
 
 import (
-	"github.com/lukegb/labmapper/admindb"
 	"github.com/lukegb/labmapper"
+	"github.com/lukegb/labmapper/admindb"
 )
 
 func GetInterestingMachines(admindb *admindb.AdminDB) ([]labmapper.MachineIdentity, error) {

@@ -1,9 +1,9 @@
 package admindb
 
 import (
-	"github.com/lukegb/labmapper"
 	"database/sql"
 	"fmt"
+	"github.com/lukegb/labmapper"
 	"net"
 	"strings"
 	"time"
@@ -51,10 +51,10 @@ type dbRows interface {
 	Next() bool
 }
 
-func (h *Host) ToMachine() (labmapper.MachineIdentity) {
+func (h *Host) ToMachine() labmapper.MachineIdentity {
 	return labmapper.MachineIdentity{
 		ShortName: h.Hostname,
-		Domain: *h.fullDomainName,
+		Domain:    *h.fullDomainName,
 	}
 }
 
